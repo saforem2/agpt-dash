@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en" class="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agpt-dash — RL dashboard</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/webassets/uPlot.min.css">
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a href="#" class="logo" onclick="switchView('overview');return false;">◈ agpt-dash</a>
+    <nav class="tabs" id="tabs" aria-label="views">
+      <a data-view="overview" class="active" onclick="switchView('overview');return false;">overview</a>
+      <a data-view="metrics" onclick="switchView('metrics');return false;">metrics</a>
+      <a data-view="about" onclick="switchView('about');return false;">about</a>
+    </nav>
+    <div class="nav-right">
+      <span class="pill" id="status-pill" title="stream status">reconnecting…</span>
+      <button id="theme-toggle" aria-label="toggle theme" onclick="toggleTheme()">◐</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap" id="main">
+  <!-- OVERVIEW -->
+  <section class="view active" id="view-overview" aria-label="overview">
+    <div class="grid">
+      <div class="panel hero" id="hero-panel">
+        <h1>RL backbone</h1>
+        <p class="sub">Live training dashboard. Data from upstream tunnel.</p>
+        <div class="meta-row" id="meta-row"></div>
+      </div>
+
+      <div class="panel card" id="focus-card">
+        <h2>focus chart</h2>
+        <div id="focus-chart"></div>
+        <div class="legend" id="legend"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="board-panel">
+      <h2>board</h2>
+      <table class="board-table" id="board-table" aria-label="chain board">
+        <thead><tr><th>chain</th><th>model</th><th>nodes</th><th>step</th><th>status</th><th>action</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- METRICS -->
+  <section class="view" id="view-metrics" aria-label="metrics">
+    <h2>metrics</h2>
+    <div class="metrics-grid-wrap" id="metrics-grid"></div>
+    <div class="panel" id="evals-panel">
+      <h3>benchmark evals</h3>
+      <div id="eval-chart"></div>
+    </div>
+  </section>
+
+  <!-- ABOUT -->
+  <section class="view" id="view-about" aria-label="about">
+    <div class="panel">
+      <h2>about</h2>
+      <p>This dashboard mirrors the mimo RL reference layout for the AGPT training backbone.</p>
+      <dl class="about-dl">
+        <dt>Source</dt><dd><code>/api/backbone</code> (cached by server.py)</dd>
+        <dt>Upstream</dt><dd id="upstream-src">—</dd>
+        <dt>Cache</dt><dd id="cache-time">—</dd>
+        <dt>Stale</dt><dd id="stale-info">—</dd>
+        <dt>Live tip</dt><dd id="live-tip">—</dd>
+      </dl>
+      <p class="foot-note">Built with uPlot charts, split modules (format.js, charts.js), and responsive CSS grid.</p>
+    </div>
+  </section>
+</main>
+
+<!-- MODAL -->
+<div id="modal" class="modal" role="dialog" aria-modal="true" aria-label="chain details" onclick="if(event.target===this)closeModal()">
+  <div class="modal-card">
+    <button class="modal-close" onclick="closeModal()" aria-label="close">✕</button>
+    <h3 id="modal-title">Chain details</h3>
+    <div id="modal-body"></div>
+  </div>
+</div>
+
+<footer class="wrap foot">
+  <div class="foot-inner">
+    <a href="#" onclick="switchView('about');return false;">about</a>
+    <a href="#" onclick="openModal('upstream');return false;">source</a>
+    <a href="#" onclick="openModal('metrics');return false;">metrics</a>
+    <span class="muted" id="foot-stream">live</span>
+  </div>
+</footer>
+
+<script src="/webassets/uPlot.iife.min.js"></script>
+<script src="/js/format.js"></script>
+<script src="/js/charts.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
