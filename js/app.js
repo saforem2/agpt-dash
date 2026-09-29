@@ -17,12 +17,15 @@
   // Cached telemetry keeps ageing after the snapshot was taken, so every age is
   // advanced by the time elapsed locally since the cache was written.
   const sourceElapsed=()=>{const at=finite(data.cached_at);return at==null?0:Math.max(0,Date.now()/1000-at);};
-  const agedSeconds=value=>{const base=finite(value);return base==null?null:base+sourceElapsed();};
+  // finite(null) is 0 because Number(null)===0, so null/undefined must be
+  // rejected BEFORE coercion or a chain with no age reads as age zero.
+  const agedSeconds=value=>{if(value==null)return null;const base=finite(value);return base==null?null:base+sourceElapsed();};
   const isLive=chain=>{
     if(data.stale||["error","empty","stale"].includes(data.cache_status)) return false;
     if(STALE_STATES.has(chain?.queue_state)) return false;
     const window=finite(data.live_window)??300;
     if(chain?.queue_state==="R"){const tip=agedSeconds(chain.live_tip?.age);return tip==null?sourceElapsed()<=window:tip<=window;}
+    if(chain?.queue_state==null) return false;
     const logAge=agedSeconds(chain?.log_age);
     return logAge!=null&&logAge<=window;
   };
@@ -98,7 +101,7 @@
   function tooltipHtml(item,x,value){const chain=item.chain,step=rawStep(item,x),perStep=(chain.gbs||0)*(chain.seq_len||0),tokens=step==null||!perStep?null:((chain.prior_tokens||0)+step*perStep)/1e9,updated=chain.updated_ts||chain.wb_ts,age=updated?Math.max(0,Date.now()/1000-updated):null;return `<strong style="color:${item.color}">${escapeHtml(item.label)}</strong><div class="chart-tooltip-row"><span>${axisMode()==="progress"?"progress":axisMode()==="tokens"?"tokens":"step"}</span><b>${axisMode()==="progress"?x.toFixed(1)+"%":axisMode()==="tokens"?x.toFixed(1)+"B":step?.toLocaleString()||"—"}</b></div><div class="chart-tooltip-row"><span>${escapeHtml(item.metricLabel||focusLabel)}</span><b>${Number(value).toPrecision(5)}</b></div><div class="chart-tooltip-row"><span>step</span><b>${step?.toLocaleString()||"—"}</b></div><div class="chart-tooltip-row"><span>tokens</span><b>${tokens==null?"—":tokens.toFixed(1)+"B"}</b></div><div class="chart-tooltip-row"><span>throughput</span><b>${finite(chain.live_tip?.tps??chain.wb_tps)?.toFixed(0)??"—"} tok/s/GPU</b></div><div class="chart-tooltip-row"><span>run updated</span><b>${age==null?"reference":relativeAge(age)}</b></div>`;}
   function renderFocus(){if(focusPlot)focusPlot.destroy();focusLabel=METRICS.find(item=>item[0]===metric)?.[1]||metric;focusItems=chartItems((key,chain)=>seriesFor(key,chain),focusLabel);focusPlot=multiSeriesChart($id("focus-chart"),focusLabel,focusItems,chartOptions({height:360,scientific:metric==="lr",title:`${focusLabel} · all chains`}));}
   function renderTabs(){const el=$id("metric-tabs");el.innerHTML="";for(const [key,label] of METRICS){const button=document.createElement("button");button.type="button";button.textContent=label;button.setAttribute("aria-selected",String(key===metric));button.onclick=()=>{metric=key;syncUrl();renderTabs();renderFocus();};el.appendChild(button);}}
-  function runAge(chain){const stamp=chain.updated_ts||chain.wb_ts;if(stamp)return relativeAge(Math.max(0,Date.now()/1000-stamp));const logAge=agedSeconds(chain.log_age);if(logAge!=null)return relativeAge(logAge);return "reference";}
+  function runAge(chain){const tipAge=agedSeconds(chain.live_tip?.age);if(isLive(chain)&&tipAge!=null)return relativeAge(tipAge);const stamp=finite(chain.updated_ts)??finite(chain.wb_ts);if(stamp)return relativeAge(Math.max(0,Date.now()/1000-stamp));const logAge=agedSeconds(chain.log_age);if(logAge!=null)return relativeAge(logAge);return "reference";}
   function filteredKeys(){const query=($id("run-search")?.value||"").trim().toLowerCase(),model=$id("run-model")?.value||"",nodes=$id("run-nodes")?.value||"",status=$id("run-status")?.value||"";return chainOrder().filter(key=>{const chain=data.chains[key],live=isLive(chain);return (!query||`${key} ${chain.label||""}`.toLowerCase().includes(query))&&(!model||chain.model===model)&&(!nodes||String(chain.num_nodes)===nodes)&&(!status||(status==="live")===live);});}
   function renderRunButtons(el){
     if(!el)return;el.innerHTML="";
