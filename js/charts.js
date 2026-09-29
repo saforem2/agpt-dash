@@ -1,121 +1,85 @@
-function buildChart(el, dataSeries, opts={}){
-  const options = Object.assign({
-    width: el.clientWidth || 640,
-    height: 260,
-    series: [{}, ...dataSeries.map((_,i)=>({
-      label: dataSeries[i].label,
-      stroke: ["#2a9d8f","#e76f51","#e9c46a","#4c78a8","#f4a261","#8884d8","#90be6d","#f9844a","#577590","#43aa8b"][i%10]||"#666",
-      width: 2,
-      dash: [1,0],
-      points:{ show:true, size:2, space:0 },
-    }))],
-    axes:[{label:"step"},{label: dataSeries[0]?.label||"y"}],
-    scales: { x:{time:false}, y:{distr:1} },
-    legend: { show:true },
-    cursor: { sync:{key:"group"}, focus:{prox:10} },
-  }, opts);
+const CHART_COLORS_LIGHT = ["#4c78a8","#e45756","#54a24b","#f58518","#8f6db0","#72b7b2","#d45087","#9d755d","#6b778d","#c49a00","#7a5195","#2f8f83"];
+const CHART_COLORS_DARK = ["#6ea8dc","#ff7b7b","#7bc96f","#ffa94d","#b99add","#75d5ce","#ff87b2","#d0a275","#a6b0c3","#f0c84b","#c7a0dc","#5fd0c8"];
 
-  // dataSeries expected array of {label, data:[[step,y],...]}
-  const seriesData = dataSeries.map(s => s.data.map(p => p[0]));
-  const data = dataSeries.map(s => s.data.map(p => p[1]));
+const chartDark = () => document.body.classList.contains("dark");
+const chartColor = index => (chartDark() ? CHART_COLORS_DARK : CHART_COLORS_LIGHT)[index % CHART_COLORS_LIGHT.length];
+const chartAxis = label => ({
+  label,
+  stroke: chartDark() ? "#aeb4bf" : "#5d626c",
+  grid:{stroke:chartDark() ? "#2c313a" : "#e3e6eb"},
+  ticks:{stroke:chartDark() ? "#3a3f49" : "#c7ccd4"},
+});
 
-  // prepend series labels in first column if needed; using uPlot format
-  // uPlot expects arrays of arrays; first array = x, rest = series y
-  const plotData = [seriesData[0] || []];
-  for(let i=0;i<dataSeries.length;i++){
-    plotData.push(data[i] || []);
+function percentileRange(columns){
+  const values = columns.flatMap(column=>column.filter(value=>value != null && Number.isFinite(value))).sort((a,b)=>a-b);
+  if(values.length < 20) return null;
+  const low = values[Math.floor(values.length*.01)], high = values[Math.floor(values.length*.99)];
+  if(!(high > low)) return null;
+  const pad = (high-low)*.05;
+  return [low-pad, high+pad];
+}
+
+function scoreRange(columns){
+  const values = columns.flatMap(column=>column.filter(value=>value != null && Number.isFinite(value)));
+  if(!values.length) return [0,1];
+  const dataLow=Math.min(...values), dataHigh=Math.max(...values);
+  const span=Math.max(.05,(dataHigh-dataLow)*1.2), middle=(dataLow+dataHigh)/2;
+  let low=middle-span/2, high=middle+span/2;
+  if(low<0){high-=low;low=0;} if(high>1){low-=high-1;high=1;}
+  return [Math.max(0,low),Math.min(1,high)];
+}
+
+function multiSeriesChart(el, label, items, options={}){
+  const prepared=(items||[]).filter(item=>Array.isArray(item.data)&&item.data.length>1);
+  el.innerHTML="";
+  if(!prepared.length){el.innerHTML='<div class="empty-state">No data available.</div>';return null;}
+  const steps=[...new Set(prepared.flatMap(item=>item.data.map(point=>point[0])))].sort((a,b)=>a-b);
+  const columns=[steps];
+  for(const item of prepared){
+    const values=new Map(item.data);
+    columns.push(steps.map(step=>{
+      const value=values.has(step)?values.get(step):null;
+      return options.logY && !(value>0) ? null : value;
+    }));
   }
-
-  const u = new uPlot(options, plotData, el);
-  return u;
-}
-
-function focusChart(el, seriesObj){
-  // seriesObj: {loss:[...], grad_norm:[...], ...} -> pick first with data
-  const entries = Object.entries(seriesObj||{}).filter(([k,v])=>Array.isArray(v)&&v.length>0);
-  if(!entries.length) return null;
-  const label = "step";
-  // Build multi-line data for all series in seriesObj
-  const keys = entries.map(([k])=>k);
-  const dataArr = entries.map(([k,v])=>v.slice(0, 600)); // downsample for perf
-  const maxLen = Math.max(...dataArr.map(a=>a.length));
-  const plotData = [dataArr[0].map(p=>p[0])];
-  for(let i=0;i<keys.length;i++) plotData.push(dataArr[i].map(p=>p[1]));
-  const options = {
-    width: el.clientWidth || 640,
-    height: 280,
-    title: "training metrics (focus)",
-    series: [{label:label, stroke:"#555", width:1}, ...keys.map((k,i)=>({
-      label: k,
-      stroke: ["#2a9d8f","#e76f51","#e9c46a","#4c78a8","#f4a261","#577590","#90be6d","#f9844a"][i%8],
-      width: 1.5,
-      dash: k.includes("norm")?[2,2]:[1,0],
-      points:{show:true, size:1},
-    }))],
-    axes:[{label:"step"},{label:"value"}],
-    scales: { x:{time:false}, y:{} },
-    legend: { show:true, live:true, cols:3 },
-    cursor: { sync:{key:"group"}, focus:{prox:10} },
+  const clipped=options.clip ? percentileRange(columns.slice(1)) : null;
+  const fixed=typeof options.range==="function" ? options.range(columns.slice(1)) : options.range;
+  const xLabel=options.progressAxis ? "run progress (%)" : options.tokensAxis ? "tokens seen (billions)" : "training step (cumulative)";
+  let tooltip=null;
+  const showTooltip=(u,seriesIndex,dataIndex)=>{
+    if(!options.tooltip||seriesIndex<1||dataIndex==null||columns[seriesIndex]?.[dataIndex]==null){if(tooltip)tooltip.hidden=true;return;}
+    const item=prepared[seriesIndex-1],x=columns[0][dataIndex],value=columns[seriesIndex][dataIndex];
+    if(!tooltip){tooltip=document.createElement("div");tooltip.className="chart-tooltip";tooltip.hidden=true;el.appendChild(tooltip);}
+    tooltip.innerHTML=options.tooltip(item,x,value);
+    tooltip.hidden=false;
+    const left=Math.min(el.clientWidth-tooltip.offsetWidth-8,Math.max(8,u.cursor.left+12));
+    const top=Math.min(el.clientHeight-tooltip.offsetHeight-8,Math.max(8,u.cursor.top+12));
+    tooltip.style.left=`${left}px`;tooltip.style.top=`${top}px`;
   };
-  return new uPlot(options, plotData, el);
-}
-
-function metricsGrid(el, seriesObj){
-  // Small multiples: one mini chart per metric series in seriesObj
-  // Just render first 4 metrics as small charts
-  el.innerHTML = ""; // we build grid manually
-  const keys = Object.keys(seriesObj||{}).filter(k=>Array.isArray(seriesObj[k])&&seriesObj[k].length);
-  const grid = document.createElement("div");
-  grid.className = "metrics-grid";
-  grid.style.cssText = "display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;";
-  for(const k of keys.slice(0,6)){
-    const card = document.createElement("div");
-    card.className = "metric-card";
-    card.style.cssText = "background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;";
-    const title = document.createElement("h4");
-    title.textContent = k;
-    title.style.cssText = "margin:0 0 6px;color:var(--fg);font-size:13px;";
-    card.appendChild(title);
-    const canvas = document.createElement("div");
-    canvas.style.height = "150px";
-    card.appendChild(canvas);
-    grid.appendChild(card);
-    setTimeout(()=>{
-      const data = seriesObj[k].slice(0,400);
-      const opts = {
-        width: canvas.clientWidth || 260,
-        height: 140,
-        series: [{label:k}, {label:k, stroke:["#4c78a8","#e9c46a","#e76f51","#577590","#43aa8b","#90be6d","#f9844a","#8884d8"][keys.indexOf(k)%8], width:2}],
-        axes:[{label:"step"},{label:k}],
-        legend: {show:false},
-        cursor: {focus:{prox:10}},
-      };
-      new uPlot(opts, [data.map(p=>p[0]), data.map(p=>p[1])], canvas);
-    }, 50);
-  }
-  el.appendChild(grid);
-}
-
-function evalChart(el, history){
-  const keys = Object.keys(history||{}).filter(k=>Array.isArray(history[k])&&history[k].length);
-  if(!keys.length){ el.innerHTML = "<p style='color:var(--muted);font-size:12px;'>No eval history</p>"; return; }
-  const maxLen = Math.max(...keys.map(k=>history[k].length));
-  const plotData = [history[keys[0]].map(p=>p[0])];
-  for(const k of keys){ plotData.push(history[k].map(p=>p[1])); }
-  const opts = {
-    width: el.clientWidth || 640,
-    height: 260,
-    title: "benchmark scores over steps",
-    series: [{label:"step", stroke:"#888", width:1}, ...keys.map((k, i)=>({
-      label: k,
-      stroke: ["#2a9d8f","#e76f51","#e9c46a","#4c78a8","#f4a261","#577590","#90be6d","#f9844a","#43aa8b","#577590"][i%10],
-      width: 2,
-      points:{show:true, size:2},
+  return new uPlot({
+    width:Math.max(260,Math.floor(options.width||el.clientWidth||640)),
+    height:options.height||320,
+    title:options.title||label,
+    series:[{label:xLabel},...prepared.map(item=>({
+      label:item.label, stroke:item.color, width:item.live?2.6:1.6,
+      alpha:item.live?1:.68, spanGaps:true, points:{show:!!options.points,size:4},
     }))],
-    axes:[{label:"step"},{label:"score"}],
-    legend: {show:true, live:true},
-    scales: { x:{time:false}, y:{distr:3,range:[0,1]} },
-    cursor: {focus:{prox:10}},
-  };
-  new uPlot(opts, plotData, el);
+    axes:[
+      {...chartAxis(options.compact?"":xLabel),size:options.compact?30:50},
+      {...chartAxis(options.compact?"":label),...(options.scientific?{values:(u,ticks)=>ticks.map(value=>value==null?"":value.toExponential(2)),size:62}:{})},
+    ],
+    scales:{x:{time:false},y:{distr:options.logY?3:1,...((fixed||clipped)?{range:fixed||clipped}:{})}},
+    legend:{show:false}, cursor:{focus:{prox:10}},
+    hooks:{setCursor:[u=>{
+      if(!options.tooltip)return;
+      let closest=-1,distance=Infinity;
+      for(let i=1;i<u.series.length;i++){
+        const idx=u.cursor.idx,value=idx==null?null:columns[i]?.[idx];
+        if(value==null)continue;
+        const y=u.valToPos(value,"y"),delta=Math.abs(y-u.cursor.top);
+        if(delta<distance){distance=delta;closest=i;}
+      }
+      showTooltip(u,closest,u.cursor.idx);
+    }]},
+  },columns,el);
 }
